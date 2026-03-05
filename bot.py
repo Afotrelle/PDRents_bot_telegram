@@ -3,7 +3,9 @@ from bs4 import BeautifulSoup
 import time
 import json
 import os
+import threading
 from telegram import Bot
+from flask import Flask
 
 TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -13,10 +15,9 @@ SEARCH_URL = "https://www.immobiliare.it/affitto-case/padova/?criterio=data&ordi
 SEEN_FILE = "seen.json"
 
 bot = Bot(token=TOKEN)
+app = Flask(__name__)
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-}
+headers = {"User-Agent": "Mozilla/5.0"}
 
 def load_seen():
     try:
@@ -34,7 +35,6 @@ def extract_listings():
     soup = BeautifulSoup(r.text, "html.parser")
 
     cards = soup.select("li.nd-list__item")
-
     listings = []
 
     for card in cards:
@@ -52,35 +52,34 @@ def extract_listings():
         except:
             continue
 
-        listings.append({
-            "id": link,
-            "price": price,
-            "link": link
-        })
+        listings.append({"id": link, "price": price, "link": link})
 
     return listings
 
-def check_new():
-    seen = load_seen()
-    listings = extract_listings()
+def bot_loop():
+    while True:
+        try:
+            seen = load_seen()
+            listings = extract_listings()
 
-    for l in listings:
-        if l["id"] not in seen:
-            message = (
-                f"🏠 Nuovo annuncio\n"
-                f"💶 {l['price']}€\n"
-                f"{l['link']}"
-            )
+            for l in listings:
+                if l["id"] not in seen:
+                    message = f"🏠 Nuovo annuncio\n💶 {l['price']}€\n{l['link']}"
+                    bot.send_message(chat_id=CHAT_ID, text=message)
+                    seen.add(l["id"])
 
-            bot.send_message(chat_id=CHAT_ID, text=message)
-            seen.add(l["id"])
+            save_seen(seen)
+            time.sleep(600)
 
-    save_seen(seen)
+        except Exception as e:
+            print("Errore:", e)
+            time.sleep(60)
 
-while True:
-    try:
-        check_new()
-        time.sleep(600)  # ogni 10 minuti
-    except Exception as e:
-        print("Errore:", e)
-        time.sleep(60)
+@app.route("/")
+def home():
+    return "Bot running"
+
+if __name__ == "__main__":
+    threading.Thread(target=bot_loop).start()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
